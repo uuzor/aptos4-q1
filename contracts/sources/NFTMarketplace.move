@@ -1,5 +1,5 @@
 // TODO# 1: Define Module and Marketplace Address
-address 0xfc97f8c3f7de072968b7a8a4eae886fb7b0717107eda9401cbb2940c03fa8aca{
+address 0xc16b7266e73a8f899c0c8446d4e801f4ce7a17f4b013ef1a9baa08ce47087c23{
 
     module NFTMarketplace {
         use 0x1::signer;
@@ -7,6 +7,10 @@ address 0xfc97f8c3f7de072968b7a8a4eae886fb7b0717107eda9401cbb2940c03fa8aca{
         use 0x1::coin;
         use 0x1::aptos_coin;
         use 0x1::timestamp;
+        use 0x1::aptos_account;
+        use aptos_std::table;
+
+        
         
         // TODO# 2: Define NFT Structure
         struct NFT has store, key {
@@ -54,6 +58,10 @@ address 0xfc97f8c3f7de072968b7a8a4eae886fb7b0717107eda9401cbb2940c03fa8aca{
             start: u64
         }
 
+        struct CoinAuction<phantom CoinType> has key {
+            locked_coins: table::Table<u64, coin::Coin<CoinType>>,
+        }
+
         // TODO# 5: Set Marketplace Fee
         const MARKETPLACE_FEE_PERCENT: u64 = 2; // 2% fee
     
@@ -78,7 +86,58 @@ address 0xfc97f8c3f7de072968b7a8a4eae886fb7b0717107eda9401cbb2940c03fa8aca{
             hasBid
         }
 
-        public entry fun bid_nft(account: &signer,marketplace_addr: address, id : u64, bid_price:u64) acquires Marketplace{
+        public entry fun close_auction(account: &signer,marketplace_addr: address, id : u64) acquires Marketplace, CoinAuction{
+            let marketplace = borrow_global_mut<Marketplace>(marketplace_addr);
+            let auction_ref = vector::borrow_mut(&mut marketplace.auctions, id);
+            let nft_ref = vector::borrow_mut(&mut marketplace.nfts, auction_ref.nft_id);
+
+            assert!(nft_ref.owner == signer::address_of(account), 100);
+
+            
+            // transfer to all remaining bidders
+            let ref = &mut borrow_global_mut<CoinAuction<aptos_coin::AptosCoin>>(auction_ref.highest_bidder).locked_coins;
+            let coins = table::remove(ref, auction_ref.id);
+
+            let feeAmount = (auction_ref.highest_bid * MARKETPLACE_FEE_PERCENT) / 100;
+            let fee = coin::extract(&mut coins, feeAmount);
+
+
+            coin::deposit<aptos_coin::AptosCoin>(signer::address_of(account), coins);
+            coin::deposit<aptos_coin::AptosCoin>(marketplace_addr, fee);
+            // automatically send the coins to other bidders
+            
+            let index:u64=0;
+            let bidders= vector::length(&auction_ref.bidders);
+        
+            while(index < bidders){
+                
+                let bidder = vector::borrow(&auction_ref.bidders, index); 
+                if(bidder.bidder == nft_ref.owner || bidder.bidder == auction_ref.highest_bidder ){
+                    index = index+1;
+                    continue
+                };
+                let locked = &mut borrow_global_mut<CoinAuction<aptos_coin::AptosCoin>>(bidder.bidder).locked_coins;
+                let coin = table::remove(locked, auction_ref.id);
+                coin::deposit<aptos_coin::AptosCoin>(bidder.bidder, coin);
+                index = index+1;
+            };
+            nft_ref.auctioned = false;
+            auction_ref.cancelled = true;
+            nft_ref.owner = auction_ref.highest_bidder;
+            nft_ref.for_sale = false;
+        }
+
+        fun deposit(sender: &signer, marketplace_addr: address, amount: u64) {
+            let coins = coin::withdraw<aptos_coin::AptosCoin>(sender, amount);
+            coin::deposit<aptos_coin::AptosCoin>(marketplace_addr, coins);
+        }
+
+        fun transfer(sender: &signer, reciever: address, amount: u64) {
+            let coins = coin::withdraw<aptos_coin::AptosCoin>(sender, amount);
+            coin::deposit<aptos_coin::AptosCoin>(reciever, coins);
+        }
+
+        public entry fun bid_nft(account: &signer,marketplace_addr: address, id : u64, bid_price:u64) acquires Marketplace, CoinAuction{
             let marketplace = borrow_global_mut<Marketplace>(marketplace_addr);
             let auction_ref = vector::borrow_mut(&mut marketplace.auctions, id);
             let nft_ref = vector::borrow_mut(&mut marketplace.nfts, auction_ref.nft_id);
@@ -100,7 +159,15 @@ address 0xfc97f8c3f7de072968b7a8a4eae886fb7b0717107eda9401cbb2940c03fa8aca{
             assert!(!hasBid, 102);
             assert!(coin::is_balance_at_least<aptos_coin::AptosCoin>(signer::address_of(account), bid_price), 102);// not enough 
 
-            coin::transfer<aptos_coin::AptosCoin>(account, marketplace_addr, bid_price);
+            if(!exists<CoinAuction<aptos_coin::AptosCoin>>(signer::address_of(account))){
+                move_to(account, CoinAuction<aptos_coin::AptosCoin>{
+                    locked_coins: table::new<u64, coin::Coin<aptos_coin::AptosCoin>>()
+                });
+            };
+
+            let ref = &mut borrow_global_mut<CoinAuction<aptos_coin::AptosCoin>>(signer::address_of(account)).locked_coins;
+            let coins = coin::withdraw<aptos_coin::AptosCoin>(account, bid_price);
+            table::add(ref, auction_ref.id, coins);
             
             let bid = Auctionee{
                     bidder:signer::address_of(account),
@@ -156,10 +223,15 @@ address 0xfc97f8c3f7de072968b7a8a4eae886fb7b0717107eda9401cbb2940c03fa8aca{
         }
 
         // TODO# 8: Mint New NFT
-        public entry fun mint_nft(account: &signer, name: vector<u8>, description: vector<u8>, uri: vector<u8>, rarity: u8) acquires Marketplace {
-            let marketplace = borrow_global_mut<Marketplace>(signer::address_of(account));
+        public entry fun mint_nft(account: &signer, marketplace_addr: address, name: vector<u8>, description: vector<u8>, uri: vector<u8>, rarity: u8) acquires Marketplace {
+            let marketplace = borrow_global_mut<Marketplace>(marketplace_addr);
             let nft_id = vector::length(&marketplace.nfts);
-
+            let fee:u64 = 2 * 100000000;
+            
+            // only owner of market place has free minting
+            if(marketplace_addr != signer::address_of(account)){
+                aptos_account::transfer(account, marketplace_addr, fee);
+            };
             let new_nft = NFT {
                 id: nft_id,
                 owner: signer::address_of(account),
@@ -177,11 +249,11 @@ address 0xfc97f8c3f7de072968b7a8a4eae886fb7b0717107eda9401cbb2940c03fa8aca{
 
         // TODO# 9: View NFT Details
         #[view]
-        public fun get_nft_details(marketplace_addr: address, nft_id: u64): (u64, address, vector<u8>, vector<u8>, vector<u8>, u64, bool, u8) acquires Marketplace {
+        public fun get_nft_details(marketplace_addr: address, nft_id: u64): (u64, address, vector<u8>, vector<u8>, vector<u8>, u64, bool, u8, bool) acquires Marketplace {
             let marketplace = borrow_global<Marketplace>(marketplace_addr);
             let nft = vector::borrow(&marketplace.nfts, nft_id);
 
-            (nft.id, nft.owner, nft.name, nft.description, nft.uri, nft.price, nft.for_sale, nft.rarity)
+            (nft.id, nft.owner, nft.name, nft.description, nft.uri, nft.price, nft.for_sale, nft.rarity, nft.auctioned)
         }
         // get auction details
         #[view]
@@ -191,6 +263,7 @@ address 0xfc97f8c3f7de072968b7a8a4eae886fb7b0717107eda9401cbb2940c03fa8aca{
 
             (auction.id, auction.nft_id, auction.cancelled, auction.highest_bidder, auction.highest_bid, auction.start_time, auction.end_time)
         }
+        
         
         // TODO# 10: List NFT for Sale
         public entry fun list_for_sale(account: &signer, marketplace_addr: address, nft_id: u64, price: u64) acquires Marketplace {
@@ -204,6 +277,7 @@ address 0xfc97f8c3f7de072968b7a8a4eae886fb7b0717107eda9401cbb2940c03fa8aca{
             nft_ref.for_sale = true;
             nft_ref.price = price;
         }
+        
 
         // TODO# 11: Update NFT Price
         public entry fun set_price(account: &signer, marketplace_addr: address, nft_id: u64, price: u64) acquires Marketplace {
@@ -314,6 +388,24 @@ address 0xfc97f8c3f7de072968b7a8a4eae886fb7b0717107eda9401cbb2940c03fa8aca{
                 mut_i = mut_i + 1;
             };
             auction_ids
+        }
+
+         #[view]
+        public fun get_all_auctions(marketplace_addr: address, limit: u64, offset: u64):vector<u64> acquires Marketplace{
+            let marketplace = borrow_global<Marketplace>(marketplace_addr);
+            let auctions = vector::empty<u64>();
+
+            let auction_len = vector::length(&marketplace.auctions);
+            let end = min(offset + limit, auction_len);
+            let mut_i = offset;
+            while (mut_i < end) {
+                let auction = vector::borrow(&marketplace.auctions, mut_i);
+                if( auction.cancelled != true){
+                    vector::push_back(&mut auctions, auction.id);
+                };
+                mut_i = mut_i + 1;
+            };
+            auctions
         }
 
         // TODO# 18: Retrieve NFTs for Sale
