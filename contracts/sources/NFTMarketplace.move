@@ -38,12 +38,12 @@ address 0xc16b7266e73a8f899c0c8446d4e801f4ce7a17f4b013ef1a9baa08ce47087c23{
             price: u64,
             rarity: u8
         }
-
+        // Bidders Struct
         struct Auctionee has store, copy, drop{
             bidder: address,
             price:u64
         }
-
+        // Auction Struct
         struct AuctionedNFT has store, key, copy, drop{
             id:u64,
             nft_id:u64,
@@ -57,7 +57,7 @@ address 0xc16b7266e73a8f899c0c8446d4e801f4ce7a17f4b013ef1a9baa08ce47087c23{
         struct CurrentTimeMicroseconds has key{
             start: u64
         }
-
+        // Coin Resource Struct
         struct CoinAuction<phantom CoinType> has key {
             locked_coins: table::Table<u64, coin::Coin<CoinType>>,
         }
@@ -387,6 +387,7 @@ address 0xc16b7266e73a8f899c0c8446d4e801f4ce7a17f4b013ef1a9baa08ce47087c23{
             auction_ids
         }
 
+        // All Auctions in market place
          #[view]
         public fun get_all_auctions(marketplace_addr: address, limit: u64, offset: u64):vector<u64> acquires Marketplace{
             let marketplace = borrow_global<Marketplace>(marketplace_addr);
