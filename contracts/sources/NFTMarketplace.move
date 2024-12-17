@@ -86,6 +86,7 @@ address 0xc16b7266e73a8f899c0c8446d4e801f4ce7a17f4b013ef1a9baa08ce47087c23{
             hasBid
         }
 
+        // Close Auction
         public entry fun close_auction(account: &signer,marketplace_addr: address, id : u64) acquires Marketplace, CoinAuction{
             let marketplace = borrow_global_mut<Marketplace>(marketplace_addr);
             let auction_ref = vector::borrow_mut(&mut marketplace.auctions, id);
@@ -127,16 +128,8 @@ address 0xc16b7266e73a8f899c0c8446d4e801f4ce7a17f4b013ef1a9baa08ce47087c23{
             nft_ref.for_sale = false;
         }
 
-        fun deposit(sender: &signer, marketplace_addr: address, amount: u64) {
-            let coins = coin::withdraw<aptos_coin::AptosCoin>(sender, amount);
-            coin::deposit<aptos_coin::AptosCoin>(marketplace_addr, coins);
-        }
 
-        fun transfer(sender: &signer, reciever: address, amount: u64) {
-            let coins = coin::withdraw<aptos_coin::AptosCoin>(sender, amount);
-            coin::deposit<aptos_coin::AptosCoin>(reciever, coins);
-        }
-
+        // Bid NFT
         public entry fun bid_nft(account: &signer,marketplace_addr: address, id : u64, bid_price:u64) acquires Marketplace, CoinAuction{
             let marketplace = borrow_global_mut<Marketplace>(marketplace_addr);
             let auction_ref = vector::borrow_mut(&mut marketplace.auctions, id);
@@ -178,6 +171,7 @@ address 0xc16b7266e73a8f899c0c8446d4e801f4ce7a17f4b013ef1a9baa08ce47087c23{
             auction_ref.highest_bid = bid_price;
         }
 
+        // Auction NFT , only Owner
         public entry fun auction_nft(account: &signer, marketplace_addr: address,id : u64, starting_bid:u64, start_time:u64, end_time:u64 )acquires Marketplace {
             let marketplace = borrow_global_mut<Marketplace>(marketplace_addr);
             let nft_ref = vector::borrow_mut(&mut marketplace.nfts, id);
@@ -196,11 +190,11 @@ address 0xc16b7266e73a8f899c0c8446d4e801f4ce7a17f4b013ef1a9baa08ce47087c23{
                 bidders: vector::empty<Auctionee>(),
                 highest_bidder: signer::address_of(account),
                 highest_bid: starting_bid,
-                start_time: start_time+timestamp::now_seconds(),
-                end_time: end_time+timestamp::now_seconds()
+                start_time: start_time,
+                end_time: end_time
             };
-            nft_ref.auctioned = true;
             vector::push_back(&mut marketplace.auctions, new_aution);
+            nft_ref.auctioned = true;
 
         }
 
@@ -216,17 +210,18 @@ address 0xc16b7266e73a8f899c0c8446d4e801f4ce7a17f4b013ef1a9baa08ce47087c23{
             };
             move_to(account, marketplace);
         }
+
         // TODO# 7: Check Marketplace Initialization
         #[view]
         public fun is_marketplace_initialized(marketplace_addr: address): bool {
             exists<Marketplace>(marketplace_addr)
         }
 
-        // TODO# 8: Mint New NFT
+        // TODO# 8: Mint New NFT , everyone
         public entry fun mint_nft(account: &signer, marketplace_addr: address, name: vector<u8>, description: vector<u8>, uri: vector<u8>, rarity: u8) acquires Marketplace {
             let marketplace = borrow_global_mut<Marketplace>(marketplace_addr);
             let nft_id = vector::length(&marketplace.nfts);
-            let fee:u64 = 2 * 100000000;
+            let fee:u64 = 2 * 1000000;  // 0.02APT
             
             // only owner of market place has free minting
             if(marketplace_addr != signer::address_of(account)){
@@ -255,6 +250,7 @@ address 0xc16b7266e73a8f899c0c8446d4e801f4ce7a17f4b013ef1a9baa08ce47087c23{
 
             (nft.id, nft.owner, nft.name, nft.description, nft.uri, nft.price, nft.for_sale, nft.rarity, nft.auctioned)
         }
+
         // get auction details
         #[view]
         public fun get_auction_details(marketplace_addr: address, auction_id: u64):(u64, u64, bool, address, u64, u64, u64) acquires Marketplace {
@@ -340,6 +336,7 @@ address 0xc16b7266e73a8f899c0c8446d4e801f4ce7a17f4b013ef1a9baa08ce47087c23{
             nft_ref.owner = new_owner;
             nft_ref.for_sale = false;
             nft_ref.price = 0;
+            nft_ref.auctioned = false;
         }
 
         // TODO# 16: Retrieve NFT Owner
